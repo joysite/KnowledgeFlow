@@ -1,0 +1,60 @@
+services:
+  ollama-proxy:
+    build:
+      context: .
+      dockerfile: Dockerfile.proxy
+    container_name: knowledgeflow-ollama-proxy
+    network_mode: host
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: knowledgeflow-backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      KLF_HOST: "0.0.0.0"
+      KLF_PORT: "8000"
+      KLF_DEBUG: "false"
+      KLF_OLLAMA_BASE_URL: "http://172.30.0.1:11435"
+    ports:
+      - "127.0.0.1:18000:8000"
+    volumes:
+      - ./data:/app/data
+    networks:
+      - knowledgeflow-net
+    depends_on:
+      ollama-proxy:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health', timeout=3)"
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: knowledgeflow-frontend
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:80"
+    networks:
+      - knowledgeflow-net
+    depends_on:
+      backend:
+        condition: service_healthy
+
+networks:
+  knowledgeflow-net:
+    external: true
+    name: knowledgeflow-net

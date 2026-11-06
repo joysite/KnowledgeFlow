@@ -1,0 +1,15 @@
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+COPY scripts/ollama_tcp_proxy.py ./
+
+USER 1000:1000
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD ["python", "-c", "import socket; target=socket.inet_aton('172.30.0.1')[::-1].hex().upper()+':2CAB'; rows=open('/proc/net/tcp').read().splitlines()[1:]; raise SystemExit(0 if any(row.split()[1]==target and row.split()[3]=='0A' for row in rows) else 1)"]
+
+CMD ["python", "ollama_tcp_proxy.py"]
