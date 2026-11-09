@@ -19,6 +19,7 @@ from app.db.engine import create_database_engine
 from app.db.session import create_session_factory
 from app.embeddings import EmbeddingService
 from app.llm import OllamaChatService
+from app.services.knowledge_base_locks import KnowledgeBaseOperationLocks
 from app.services.vector_index import VectorIndexService
 from app.vectorstore import ChromaVectorStore
 
@@ -54,6 +55,9 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         application.state.database_engine = engine
         application.state.session_factory = create_session_factory(engine)
 
+        # 创建应用级知识库操作锁，协调导入与删除等写操作。
+        application.state.knowledge_base_operation_locks = KnowledgeBaseOperationLocks()
+
         # 创建应用级 HTTP 客户端，供 Embedding 服务复用。
         ollama_client = httpx.AsyncClient()
         application.state.ollama_client = ollama_client
@@ -86,6 +90,7 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
             finally:
                 # 清理应用状态中的共享资源引用。
                 for name in (
+                    "knowledge_base_operation_locks",
                     "vector_index_service",
                     "vector_store",
                     "embedding_service",

@@ -9,6 +9,11 @@ const router = createRouter({
       component: () => import('../views/DashboardView.vue'),
     },
     {
+      path: '/admin',
+      name: 'admin',
+      component: () => import('../views/AdminView.vue'),
+    },
+    {
       path: '/knowledge-bases/:id',
       name: 'knowledge-base',
       component: () => import('../views/KnowledgeBaseView.vue'),

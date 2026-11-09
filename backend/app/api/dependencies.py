@@ -9,11 +9,14 @@ from app.agent import AgentExecutor, ToolRegistry, create_rag_tool
 from app.db.session import get_db_session
 from app.ingestion.chunk_processor import ChunkProcessor
 from app.ingestion.chunker import TextChunker
+from app.ingestion.storage import LocalFileStorage
 from app.ingestion.token_counter import NomicTokenCounter
 from app.services.bm25_search import BM25SearchService
 from app.services.context_builder import ContextBuilder
 from app.services.document_ingestion import DocumentIngestionService
 from app.services.hybrid_search import HybridSearchService
+from app.services.knowledge_base_deletion import KnowledgeBaseDeletionService
+from app.services.knowledge_base_locks import KnowledgeBaseOperationLocks
 from app.services.rag import RAGService
 from app.services.vector_search import VectorSearchService
 
@@ -51,10 +54,20 @@ async def get_document_ingestion_service(
     if vector_index_service is None:
         raise RuntimeError("向量索引服务尚未初始化，请检查应用 lifespan 配置")
 
+    operation_locks = getattr(
+        request.app.state,
+        "knowledge_base_operation_locks",
+        None,
+    )
+
+    if not isinstance(operation_locks, KnowledgeBaseOperationLocks):
+        raise RuntimeError("知识库操作锁尚未初始化，请检查应用 lifespan 配置")
+
     return DocumentIngestionService(
         session=session,
         chunk_processor=get_chunk_processor(),
         vector_index_service=vector_index_service,
+        operation_locks=operation_locks,
     )
 
 
@@ -142,4 +155,39 @@ async def get_agent_executor(
     return AgentExecutor(
         chat_service=chat_service,
         tool_registry=registry,
+    )
+
+
+async def get_knowledge_base_operation_locks(
+    request: Request,
+) -> KnowledgeBaseOperationLocks:
+    """获取应用级知识库操作锁。"""
+    operation_locks = getattr(
+        request.app.state,
+        "knowledge_base_operation_locks",
+        None,
+    )
+
+    if not isinstance(operation_locks, KnowledgeBaseOperationLocks):
+        raise RuntimeError("知识库操作锁尚未初始化，请检查应用 lifespan 配置")
+
+    return operation_locks
+
+
+async def get_knowledge_base_deletion_service(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+) -> KnowledgeBaseDeletionService:
+    """组装当前请求使用的知识库彻底删除服务。"""
+    vector_store = getattr(request.app.state, "vector_store", None)
+    if vector_store is None:
+        raise RuntimeError("向量存储尚未初始化，请检查应用 lifespan 配置")
+
+    operation_locks = await get_knowledge_base_operation_locks(request)
+
+    return KnowledgeBaseDeletionService(
+        session=session,
+        vector_store=vector_store,
+        operation_locks=operation_locks,
+        file_storage=LocalFileStorage(),
     )

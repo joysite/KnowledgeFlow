@@ -17,6 +17,11 @@ from app.ingestion.validators import UploadFileValidator, ValidatedFile
 from app.models import Document, DocumentChunk
 from app.repositories.document_chunk import DocumentChunkRepository
 from app.services.document import DocumentService
+from app.services.knowledge_base import (
+    KnowledgeBaseDeletingError,
+    KnowledgeBaseService,
+)
+from app.services.knowledge_base_locks import KnowledgeBaseOperationLocks
 from app.services.vector_index import VectorIndexService
 
 
@@ -30,6 +35,10 @@ class DocumentAlreadyExistsError(ValueError):
 
 class EmptyDocumentContentError(ValueError):
     """文档清洗后没有有效文本内容。"""
+
+
+class KnowledgeBaseNotFoundError(LookupError):
+    """导入目标知识库不存在。"""
 
 
 class EmptyDocumentChunksError(ValueError):
@@ -48,6 +57,7 @@ class DocumentIngestionService:
         parser_registry: ParserRegistry | None = None,
         cleaner: DocumentCleaner | None = None,
         vector_index_service: VectorIndexService | None = None,
+        operation_locks: KnowledgeBaseOperationLocks | None = None,
     ) -> None:
         """初始化文档导入服务及其依赖。"""
         if not isinstance(session, AsyncSession):
@@ -72,6 +82,11 @@ class DocumentIngestionService:
         ):
             raise TypeError("vector_index_service 必须是 VectorIndexService 类型")
 
+        if operation_locks is not None and not isinstance(
+            operation_locks, KnowledgeBaseOperationLocks
+        ):
+            raise TypeError("operation_locks 必须是 KnowledgeBaseOperationLocks 类型")
+
         self.session = session
         self.document_service = DocumentService(session)
         self.chunk_repository = DocumentChunkRepository(session)
@@ -84,6 +99,7 @@ class DocumentIngestionService:
         self.cleaner = cleaner or DocumentCleaner()
         self.chunk_processor = chunk_processor
         self.vector_index_service = vector_index_service
+        self.operation_locks = operation_locks or KnowledgeBaseOperationLocks()
 
     async def _store_and_validate_file(
         self,
@@ -433,7 +449,26 @@ class DocumentIngestionService:
         knowledge_base_id: int,
         upload_file: UploadFile,
     ) -> Document:
-        """执行完整文档导入流程并返回处理完成的文档。"""
+        """持有知识库操作锁，执行完整文档导入流程。"""
+        async with self.operation_locks.hold(knowledge_base_id):
+            knowledge_base = await KnowledgeBaseService(self.session).get_by_id(knowledge_base_id)
+
+            if knowledge_base is None:
+                raise KnowledgeBaseNotFoundError(f"知识库不存在：{knowledge_base_id}")
+
+            if knowledge_base.status != "active":
+                raise KnowledgeBaseDeletingError(
+                    f"知识库正在删除，无法导入文档：{knowledge_base_id}"
+                )
+
+            return await self._ingest_locked(knowledge_base_id, upload_file)
+
+    async def _ingest_locked(
+        self,
+        knowledge_base_id: int,
+        upload_file: UploadFile,
+    ) -> Document:
+        """执行持锁状态下的完整文档导入流程。"""
         stored_file, validated_file = await self._prepare_upload(
             knowledge_base_id,
             upload_file,

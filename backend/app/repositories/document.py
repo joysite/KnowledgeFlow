@@ -6,7 +6,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models import Document
+from app.models import Document, DocumentChunk
 from app.repositories.base import BaseRepository
 
 
@@ -110,6 +110,35 @@ class DocumentRepository(BaseRepository[Document]):
         result = await self.session.scalars(statement)
 
         return list(result.all())
+
+    async def get_by_knowledge_base_with_chunk_counts(
+        self,
+        knowledge_base_id: int,
+        offset: int = 0,
+        limit: int = 20,
+    ) -> tuple[list[tuple[Document, int]], int]:
+        """分页查询知识库文档及其分块数量，并返回文档总数。"""
+        self._validate_pagination(offset, limit)
+
+        count_statement = (
+            select(func.count())
+            .select_from(Document)
+            .where(Document.knowledge_base_id == knowledge_base_id)
+        )
+        total = await self.session.scalar(count_statement)
+
+        statement = (
+            select(Document, func.count(DocumentChunk.id).label("chunk_count"))
+            .outerjoin(DocumentChunk, DocumentChunk.document_id == Document.id)
+            .where(Document.knowledge_base_id == knowledge_base_id)
+            .group_by(Document.id)
+            .order_by(Document.id.asc())
+            .offset(offset)
+            .limit(limit)
+        )
+        result = await self.session.execute(statement)
+
+        return list(result.all()), total or 0
 
     async def get_stale_processing(
         self,

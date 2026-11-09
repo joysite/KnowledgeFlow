@@ -251,6 +251,19 @@ class DocumentService:
             limit=limit,
         )
 
+    async def get_by_knowledge_base_with_chunk_counts(
+        self,
+        knowledge_base_id: int,
+        offset: int = 0,
+        limit: int = 20,
+    ) -> tuple[list[tuple[Document, int]], int]:
+        """分页查询知识库文档及分块数量。"""
+        return await self.repository.get_by_knowledge_base_with_chunk_counts(
+            knowledge_base_id,
+            offset=offset,
+            limit=limit,
+        )
+
     async def get_stale_processing(
         self,
         updated_before: datetime,

@@ -4,6 +4,7 @@ import math
 from pathlib import Path
 
 import chromadb
+from chromadb.errors import NotFoundError
 
 from app.core.paths import CHROMA_DIR
 
@@ -237,6 +238,19 @@ class ChromaVectorStore:
 
         collection = self.client.get_collection(name=collection_name)
         collection.delete(ids=ids)
+
+    def delete_collection(self, name: str) -> None:
+        """删除整个向量集合；集合不存在时视为删除成功。"""
+        if not isinstance(name, str):
+            raise TypeError("集合名称必须是字符串")
+        if not name.strip():
+            raise ValueError("集合名称不能为空")
+
+        try:
+            self.client.delete_collection(name=name)
+        except NotFoundError:
+            # 支持删除流程中断后的安全重试。
+            return
 
     def rename_collection(self, old_name: str, new_name: str) -> None:
         """安全重命名集合，不覆盖已有集合。"""

@@ -17,6 +17,8 @@ from app.services.document_ingestion import (
     DocumentIngestionService,
     EmptyDocumentChunksError,
     EmptyDocumentContentError,
+    KnowledgeBaseDeletingError,
+    KnowledgeBaseNotFoundError,
 )
 from app.services.knowledge_base import KnowledgeBaseService
 
@@ -2465,3 +2467,63 @@ def test_chunk_document_enables_markdown_heading_extraction():
 
     assert result == chunks
     assert result[0].metadata["heading_path"] == ["项目标题"]
+
+
+@pytest.mark.asyncio
+async def test_ingest_rejects_deleting_knowledge_base_without_storing_file(
+    database,
+    tmp_path,
+):
+    """删除中的知识库不允许导入文档，且不得保存上传文件。"""
+    _, session_factory = database
+
+    async with session_factory() as session:
+        kb = await KnowledgeBaseService(session).create(name="删除状态导入保护测试知识库")
+        kb.status = "deleting"
+        await session.commit()
+
+        storage = LocalFileStorage(upload_dir=tmp_path / "uploads")
+        service = DocumentIngestionService(
+            session=session,
+            chunk_processor=create_chunk_processor(),
+            storage=storage,
+        )
+
+        with pytest.raises(
+            KnowledgeBaseDeletingError,
+            match=f"知识库正在删除，无法导入文档：{kb.id}",
+        ):
+            await service.ingest(
+                knowledge_base_id=kb.id,
+                upload_file=make_upload_file(b"must not be stored"),
+            )
+
+        assert not (tmp_path / "uploads").exists()
+
+
+@pytest.mark.asyncio
+async def test_ingest_rejects_missing_knowledge_base_without_storing_file(
+    database,
+    tmp_path,
+):
+    """不存在的知识库不允许导入文档，且不得保存上传文件。"""
+    _, session_factory = database
+
+    async with session_factory() as session:
+        storage = LocalFileStorage(upload_dir=tmp_path / "uploads")
+        service = DocumentIngestionService(
+            session=session,
+            chunk_processor=create_chunk_processor(),
+            storage=storage,
+        )
+
+        with pytest.raises(
+            KnowledgeBaseNotFoundError,
+            match="知识库不存在：999",
+        ):
+            await service.ingest(
+                knowledge_base_id=999,
+                upload_file=make_upload_file(b"must not be stored"),
+            )
+
+        assert not (tmp_path / "uploads").exists()

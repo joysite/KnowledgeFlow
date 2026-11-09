@@ -24,6 +24,10 @@ class KnowledgeBase(Base):
             "length(trim(name)) BETWEEN 1 AND 128",
             name="name_length_valid",
         ),
+        CheckConstraint(
+            "status IN ('active', 'deleting')",
+            name="status_valid",
+        ),
     )
 
     # 知识库主键
@@ -41,6 +45,20 @@ class KnowledgeBase(Base):
 
     # 知识库描述
     description: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+
+    # 知识库生命周期状态
+    status: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default="active",
+        server_default="active",
+    )
+
+    # 最近一次删除清理失败原因
+    deletion_error: Mapped[str | None] = mapped_column(
         Text,
         nullable=True,
     )

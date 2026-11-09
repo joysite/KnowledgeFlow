@@ -15,6 +15,8 @@ from app.services.document_ingestion import (
     DocumentAlreadyExistsError,
     EmptyDocumentChunksError,
     EmptyDocumentContentError,
+    KnowledgeBaseDeletingError,
+    KnowledgeBaseNotFoundError,
 )
 from app.services.knowledge_base import KnowledgeBaseService
 
@@ -120,6 +122,16 @@ def test_upload_document_returns_not_found_for_missing_knowledge_base(
             },
         ),
         (
+            KnowledgeBaseNotFoundError("知识库不存在：1"),
+            404,
+            "知识库不存在：1",
+        ),
+        (
+            KnowledgeBaseDeletingError("知识库正在删除，无法导入文档：1"),
+            409,
+            "知识库正在删除，无法导入文档：1",
+        ),
+        (
             UploadTooLargeError("文件大小超过限制"),
             413,
             "文件大小超过限制",
@@ -179,3 +191,146 @@ def test_document_upload_route_is_registered_in_main_app():
 
     assert path in schema["paths"]
     assert "post" in schema["paths"][path]
+
+
+def create_document_list_client(
+    monkeypatch,
+    *,
+    knowledge_base=None,
+    documents=None,
+    total=0,
+):
+    """创建隔离数据库和文档查询服务的列表 API 客户端。"""
+    from app.api.routes import documents as documents_route
+    from app.db.session import get_db_session
+
+    if knowledge_base is None:
+        knowledge_base = SimpleNamespace(status="active")
+
+    async def fake_get_by_id(self, knowledge_base_id):
+        return knowledge_base
+
+    class FakeDocumentService:
+        def __init__(self, session):
+            self.session = session
+
+        async def get_by_knowledge_base_with_chunk_counts(
+            self,
+            knowledge_base_id,
+            offset=0,
+            limit=20,
+        ):
+            self.called_with = (knowledge_base_id, offset, limit)
+            return documents or [], total
+
+    monkeypatch.setattr(KnowledgeBaseService, "get_by_id", fake_get_by_id)
+    monkeypatch.setattr(documents_route, "DocumentService", FakeDocumentService)
+
+    application = FastAPI()
+    application.include_router(router, prefix="/api/v1")
+    application.dependency_overrides[get_db_session] = lambda: object()
+
+    return TestClient(application)
+
+
+def test_list_knowledge_base_documents_returns_paginated_items(monkeypatch):
+    """测试文档列表返回分块数量和分页信息。"""
+    document = SimpleNamespace(
+        id=10,
+        knowledge_base_id=1,
+        name="测试文档.pdf",
+        file_type="pdf",
+        file_size=2048,
+        status="completed",
+        error_message=None,
+        created_at=datetime(2026, 11, 5, 10, 0, 0),
+    )
+    client = create_document_list_client(
+        monkeypatch,
+        documents=[(document, 3)],
+        total=25,
+    )
+
+    response = client.get("/api/v1/knowledge-bases/1/documents?offset=20&limit=5")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "items": [
+            {
+                "id": 10,
+                "knowledge_base_id": 1,
+                "name": "测试文档.pdf",
+                "file_type": "pdf",
+                "file_size": 2048,
+                "status": "completed",
+                "error_message": None,
+                "created_at": "2026-11-05T10:00:00",
+                "chunk_count": 3,
+            }
+        ],
+        "offset": 20,
+        "limit": 5,
+        "total": 25,
+    }
+
+
+def test_list_knowledge_base_documents_returns_not_found(monkeypatch):
+    """测试知识库不存在时返回 404。"""
+    client = create_document_list_client(monkeypatch, knowledge_base=None)
+    monkeypatch.setattr(
+        KnowledgeBaseService,
+        "get_by_id",
+        lambda self, knowledge_base_id: _async_none(),
+    )
+
+    response = client.get("/api/v1/knowledge-bases/999/documents")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "知识库不存在"
+
+
+def test_list_knowledge_base_documents_rejects_deleting_knowledge_base(
+    monkeypatch,
+):
+    """测试知识库正在删除时返回 409。"""
+    client = create_document_list_client(
+        monkeypatch,
+        knowledge_base=SimpleNamespace(status="deleting"),
+    )
+
+    response = client.get("/api/v1/knowledge-bases/1/documents")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "知识库正在删除，无法查询文档"
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "offset=-1",
+        "limit=0",
+        "limit=101",
+    ],
+)
+def test_list_knowledge_base_documents_validates_pagination(monkeypatch, query):
+    """测试文档列表分页参数范围。"""
+    client = create_document_list_client(monkeypatch)
+
+    response = client.get(f"/api/v1/knowledge-bases/1/documents?{query}")
+
+    assert response.status_code == 422
+
+
+async def _async_none():
+    return None
+
+
+def test_document_list_route_is_registered_in_main_app():
+    """测试文档列表 GET 路由已注册到正式 FastAPI 应用。"""
+    from app.main import app
+
+    schema = app.openapi()
+    path = "/api/v1/knowledge-bases/{knowledge_base_id}/documents"
+
+    assert path in schema["paths"]
+    assert "get" in schema["paths"][path]

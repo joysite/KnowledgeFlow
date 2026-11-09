@@ -72,6 +72,105 @@ def test_get_by_id_with_documents_returns_none_when_not_found(database):
     asyncio.run(run_test())
 
 
+def test_list_all_with_document_counts(database):
+    """测试分页查询知识库时统计文档数量，包含零文档知识库。"""
+    _, session_factory = database
+
+    async def run_test():
+        async with session_factory() as session:
+            first = KnowledgeBase(name="无文档知识库")
+            second = KnowledgeBase(name="两个文档知识库")
+            third = KnowledgeBase(name="一个文档知识库")
+            session.add_all([first, second, third])
+            await session.flush()
+
+            session.add_all(
+                [
+                    Document(
+                        knowledge_base_id=second.id,
+                        name="文档一.txt",
+                        file_type="txt",
+                        file_path="/tmp/one.txt",
+                        file_size=10,
+                        content_hash="a" * 64,
+                    ),
+                    Document(
+                        knowledge_base_id=second.id,
+                        name="文档二.txt",
+                        file_type="txt",
+                        file_path="/tmp/two.txt",
+                        file_size=20,
+                        content_hash="b" * 64,
+                    ),
+                    Document(
+                        knowledge_base_id=third.id,
+                        name="文档三.txt",
+                        file_type="txt",
+                        file_path="/tmp/three.txt",
+                        file_size=30,
+                        content_hash="c" * 64,
+                    ),
+                ]
+            )
+            await session.flush()
+
+            repository = KnowledgeBaseRepository(session)
+            results = await repository.list_all_with_document_counts()
+
+            assert [(item.id, count) for item, count in results] == [
+                (first.id, 0),
+                (second.id, 2),
+                (third.id, 1),
+            ]
+
+            page = await repository.list_all_with_document_counts(
+                offset=1,
+                limit=1,
+            )
+            assert [(item.id, count) for item, count in page] == [(second.id, 2)]
+
+    asyncio.run(run_test())
+
+
+def test_list_all_with_document_counts_supports_keyword(database):
+    """测试聚合列表按名称关键词过滤并保留文档数量。"""
+    _, session_factory = database
+
+    async def run_test():
+        async with session_factory() as session:
+            matched = KnowledgeBase(name="Python 知识库")
+            KnowledgeBase(name="Java 知识库")
+            session.add_all([matched, KnowledgeBase(name="Python 笔记")])
+            await session.flush()
+
+            session.add(
+                Document(
+                    knowledge_base_id=matched.id,
+                    name="Python.txt",
+                    file_type="txt",
+                    file_path="/tmp/python.txt",
+                    file_size=10,
+                    content_hash="e" * 64,
+                )
+            )
+            await session.flush()
+
+            repository = KnowledgeBaseRepository(session)
+            results = await repository.list_all_with_document_counts(
+                keyword=" Python ",
+            )
+
+            assert [(item.name, count) for item, count in results] == [
+                ("Python 知识库", 1),
+                ("Python 笔记", 0),
+            ]
+
+            empty = await repository.list_all_with_document_counts(keyword="不存在")
+            assert empty == []
+
+    asyncio.run(run_test())
+
+
 def test_search_by_name_returns_matching_entities(database):
     """测试根据名称关键词进行包含搜索。"""
     _, session_factory = database

@@ -56,13 +56,29 @@ def test_knowledge_base_timestamp_defaults():
     assert columns["updated_at"].onupdate is not None
 
 
-def test_knowledge_base_name_check_constraint():
-    """测试知识库名称长度和非空约束。"""
-    constraints = [
-        constraint
+def test_knowledge_base_lifecycle_columns():
+    """测试知识库生命周期字段定义。"""
+    columns = KnowledgeBase.__table__.columns
+
+    status = columns["status"]
+    assert status.nullable is False
+    assert status.type.length == 20
+    assert status.default.arg == "active"
+    assert status.server_default.arg == "active"
+
+    deletion_error = columns["deletion_error"]
+    assert deletion_error.nullable is True
+
+
+def test_knowledge_base_check_constraints():
+    """测试知识库名称和生命周期状态约束。"""
+    constraints = {
+        constraint.name: str(constraint.sqltext)
         for constraint in KnowledgeBase.__table__.constraints
         if isinstance(constraint, CheckConstraint)
-    ]
+    }
 
-    assert len(constraints) == 1
-    assert constraints[0].name == ("ck_knowledge_bases_name_length_valid")
+    assert constraints == {
+        "ck_knowledge_bases_name_length_valid": ("length(trim(name)) BETWEEN 1 AND 128"),
+        "ck_knowledge_bases_status_valid": "status IN ('active', 'deleting')",
+    }

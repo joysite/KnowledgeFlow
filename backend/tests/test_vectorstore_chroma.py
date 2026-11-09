@@ -447,3 +447,45 @@ def test_rename_collection_rejects_invalid_names(
 
     with pytest.raises(error):
         store.rename_collection(old_name, new_name)
+
+
+def test_delete_collection_removes_entire_collection(tmp_path):
+    """验证删除整个集合及其向量。"""
+    store = ChromaVectorStore(tmp_path / "chroma")
+    store.upsert(
+        "knowledge_base_1",
+        ["chunk-1", "chunk-2"],
+        [[0.1, 0.2], [0.3, 0.4]],
+    )
+
+    store.delete_collection("knowledge_base_1")
+
+    names = {item.name for item in store.client.list_collections()}
+    assert "knowledge_base_1" not in names
+
+
+def test_delete_collection_is_idempotent(tmp_path):
+    """验证重复删除不存在的集合不会失败。"""
+    store = ChromaVectorStore(tmp_path / "chroma")
+
+    store.delete_collection("knowledge_base_missing")
+    store.delete_collection("knowledge_base_missing")
+
+    assert "knowledge_base_missing" not in {item.name for item in store.client.list_collections()}
+
+
+@pytest.mark.parametrize(
+    ("name", "error"),
+    [
+        (None, TypeError),
+        (123, TypeError),
+        ("", ValueError),
+        ("   ", ValueError),
+    ],
+)
+def test_delete_collection_rejects_invalid_names(tmp_path, name, error):
+    """验证删除集合时拒绝非法名称。"""
+    store = ChromaVectorStore(tmp_path / "chroma")
+
+    with pytest.raises(error):
+        store.delete_collection(name)

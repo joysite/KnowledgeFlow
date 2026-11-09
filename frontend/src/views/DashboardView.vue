@@ -96,6 +96,9 @@ onMounted(loadKnowledgeBases)
           <span class="status-dot"></span>
           本地知识库
         </span>
+        <RouterLink to="/admin" class="admin-entry">
+          管理后台
+        </RouterLink>
       </div>
     </header>
 

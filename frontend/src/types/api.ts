@@ -5,6 +5,8 @@ export interface KnowledgeBase {
   description: string | null
   created_at: string
   updated_at: string
+  status: 'active' | 'deleting'
+  deletion_error: string | null
 }
 
 /** 创建知识库请求 */
@@ -13,9 +15,20 @@ export interface KnowledgeBaseCreateRequest {
   description?: string | null
 }
 
+/** 更新知识库请求 */
+export interface KnowledgeBaseUpdateRequest {
+  name?: string
+  description?: string | null
+}
+
+/** 知识库列表项 */
+export interface KnowledgeBaseListItem extends KnowledgeBase {
+  document_count: number
+}
+
 /** 知识库分页响应 */
 export interface KnowledgeBaseListResponse {
-  items: KnowledgeBase[]
+  items: KnowledgeBaseListItem[]
   offset: number
   limit: number
 }
@@ -29,6 +42,28 @@ export interface DocumentUploadResponse {
   file_size: number
   status: string
   created_at: string
+}
+
+
+/** 文档列表项 */
+export interface DocumentListItem {
+  id: number
+  knowledge_base_id: number
+  name: string
+  file_type: string
+  file_size: number
+  status: 'pending' | 'processing' | 'completed' | 'failed'
+  error_message: string | null
+  created_at: string
+  chunk_count: number
+}
+
+/** 文档分页响应 */
+export interface DocumentListResponse {
+  items: DocumentListItem[]
+  offset: number
+  limit: number
+  total: number
 }
 
 /** 重复文档错误详情 */

@@ -2,18 +2,23 @@
 
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel, ConfigDict
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_document_ingestion_service
 from app.core.logging import get_logger
+from app.db.session import get_db_session
 from app.ingestion.storage import UploadTooLargeError
 from app.ingestion.validators import FileValidationError
+from app.services.document import DocumentService
 from app.services.document_ingestion import (
     DocumentAlreadyExistsError,
     DocumentIngestionService,
     EmptyDocumentChunksError,
     EmptyDocumentContentError,
+    KnowledgeBaseDeletingError,
+    KnowledgeBaseNotFoundError,
 )
 from app.services.knowledge_base import KnowledgeBaseService
 
@@ -35,12 +40,87 @@ class DocumentUploadResponse(BaseModel):
     created_at: datetime
 
 
+class DocumentListItemResponse(BaseModel):
+    """知识库文档列表项。"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    knowledge_base_id: int
+    name: str
+    file_type: str
+    file_size: int
+    status: str
+    error_message: str | None
+    created_at: datetime
+    chunk_count: int
+
+
+class DocumentListResponse(BaseModel):
+    """知识库文档分页列表响应。"""
+
+    items: list[DocumentListItemResponse]
+    offset: int
+    limit: int
+    total: int
+
+
 class DocumentDuplicateResponse(BaseModel):
     """重复文档响应。"""
 
     code: int
     message: str
     document_id: int
+
+
+@router.get(
+    "/knowledge-bases/{knowledge_base_id}/documents",
+    response_model=DocumentListResponse,
+    summary="分页查询知识库文档",
+)
+async def list_knowledge_base_documents(
+    knowledge_base_id: int,
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=20, ge=1, le=100),
+    session: AsyncSession = Depends(get_db_session),
+) -> DocumentListResponse:
+    """分页查询指定知识库的文档及其分块数量。"""
+    knowledge_base_service = KnowledgeBaseService(session)
+    knowledge_base = await knowledge_base_service.get_by_id(knowledge_base_id)
+
+    if knowledge_base is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="知识库不存在",
+        )
+
+    if knowledge_base.status == "deleting":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="知识库正在删除，无法查询文档",
+        )
+
+    document_service = DocumentService(session)
+    documents, total = await document_service.get_by_knowledge_base_with_chunk_counts(
+        knowledge_base_id,
+        offset=offset,
+        limit=limit,
+    )
+
+    return DocumentListResponse(
+        items=[
+            DocumentListItemResponse.model_validate(
+                {
+                    **document.__dict__,
+                    "chunk_count": chunk_count,
+                }
+            )
+            for document, chunk_count in documents
+        ],
+        offset=offset,
+        limit=limit,
+        total=total,
+    )
 
 
 @router.post(
@@ -70,6 +150,16 @@ async def upload_document(
             knowledge_base_id=knowledge_base_id,
             upload_file=file,
         )
+    except KnowledgeBaseNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    except KnowledgeBaseDeletingError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
     except DocumentAlreadyExistsError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

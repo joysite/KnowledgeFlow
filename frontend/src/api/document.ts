@@ -1,7 +1,15 @@
 import { apiClient } from './http'
-import type { DocumentUploadResponse } from '../types/api'
+import type { DocumentListResponse, DocumentUploadResponse } from '../types/api'
 
 export const documentApi = {
+  /** 分页获取指定知识库的文档 */
+  list(knowledgeBaseId: number, offset = 0, limit = 20) {
+    return apiClient.get<DocumentListResponse>(
+      `/knowledge-bases/${knowledgeBaseId}/documents`,
+      { params: { offset, limit } },
+    )
+  },
+
   /** 上传并导入文档 */
   upload(
     knowledgeBaseId: number,

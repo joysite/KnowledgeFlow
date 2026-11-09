@@ -573,3 +573,28 @@ a {
     flex-wrap: wrap;
   }
 }
+
+
+/* ===== 管理后台入口 ===== */
+
+.admin-entry {
+  padding: 7px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--primary);
+  background: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  transition: background 0.2s, border-color 0.2s;
+}
+
+.admin-entry:hover {
+  border-color: #d5d0fa;
+  background: #f8f7ff;
+}
+
+@media (max-width: 600px) {
+  .topbar-right {
+    gap: 12px;
+  }
+}

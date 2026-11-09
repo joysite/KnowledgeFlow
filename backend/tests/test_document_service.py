@@ -609,3 +609,38 @@ def test_delete_returns_false_when_missing(database):
             assert await service.delete(999) is False
 
     asyncio.run(run_test())
+
+
+def test_get_by_knowledge_base_with_chunk_counts_delegates_to_repository(database):
+    """测试 Service 委托 Repository 查询文档及分块数量。"""
+    _, session_factory = database
+
+    async def run_test():
+        async with session_factory() as session:
+            knowledge_base = await create_knowledge_base(session)
+            document = await create_document(session, knowledge_base.id)
+            service = DocumentService(session)
+
+            chunk = DocumentChunk(
+                document_id=document.id,
+                chunk_index=0,
+                content="Service 聚合查询测试分块。",
+                token_count=10,
+                start_index=0,
+                end_index=10,
+            )
+            session.add(chunk)
+            await session.flush()
+
+            items, total = await service.get_by_knowledge_base_with_chunk_counts(
+                knowledge_base.id,
+                offset=0,
+                limit=10,
+            )
+
+            assert total == 1
+            assert len(items) == 1
+            assert items[0][0].id == document.id
+            assert items[0][1] == 1
+
+    asyncio.run(run_test())

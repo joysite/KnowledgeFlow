@@ -6,6 +6,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import KnowledgeBase
 from app.repositories import KnowledgeBaseRepository
+from app.services.knowledge_base_locks import KnowledgeBaseOperationLocks
+
+
+class KnowledgeBaseDeletingError(RuntimeError):
+    """知识库正在删除，拒绝新的修改操作。"""
 
 
 class KnowledgeBaseService:
@@ -13,9 +18,14 @@ class KnowledgeBaseService:
 
     ALLOWED_UPDATE_FIELDS = frozenset({"name", "description"})
 
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        operation_locks: KnowledgeBaseOperationLocks | None = None,
+    ) -> None:
         """初始化知识库 Service。"""
         self.session = session
+        self.operation_locks = operation_locks
         self.repository = KnowledgeBaseRepository(session)
 
     @staticmethod
@@ -118,6 +128,19 @@ class KnowledgeBaseService:
         """分页查询知识库。"""
         return await self.repository.list_all(offset=offset, limit=limit)
 
+    async def list_all_with_document_counts(
+        self,
+        offset: int = 0,
+        limit: int = 20,
+        keyword: str | None = None,
+    ) -> list[tuple[KnowledgeBase, int]]:
+        """分页查询知识库及其文档数量，可按名称关键词过滤。"""
+        return await self.repository.list_all_with_document_counts(
+            offset=offset,
+            limit=limit,
+            keyword=keyword,
+        )
+
     async def search_by_name(
         self,
         keyword: str,
@@ -143,10 +166,25 @@ class KnowledgeBaseService:
         """
         validated_data = self._validate_update_data(data)
 
+        if self.operation_locks is None:
+            return await self._update_locked(knowledge_base_id, validated_data)
+
+        async with self.operation_locks.hold(knowledge_base_id):
+            return await self._update_locked(knowledge_base_id, validated_data)
+
+    async def _update_locked(
+        self,
+        knowledge_base_id: int,
+        validated_data: dict[str, Any],
+    ) -> KnowledgeBase | None:
+        """在持有知识库操作锁时执行更新。"""
         knowledge_base = await self.repository.get_by_id(knowledge_base_id)
 
         if knowledge_base is None:
             return None
+
+        if knowledge_base.status != "active":
+            raise KnowledgeBaseDeletingError("知识库正在删除，暂时不能修改")
 
         try:
             await self.repository.update(

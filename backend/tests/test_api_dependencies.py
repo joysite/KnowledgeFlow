@@ -10,6 +10,7 @@ from app.api.dependencies import (
     get_document_ingestion_service,
 )
 from app.services.document_ingestion import DocumentIngestionService
+from app.services.knowledge_base_locks import KnowledgeBaseOperationLocks
 from app.services.vector_index import VectorIndexService
 
 
@@ -19,6 +20,7 @@ def create_request(vector_index_service=None):
         app=SimpleNamespace(
             state=SimpleNamespace(
                 vector_index_service=vector_index_service,
+                knowledge_base_operation_locks=KnowledgeBaseOperationLocks(),
             )
         )
     )

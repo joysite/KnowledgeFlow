@@ -219,6 +219,37 @@ def test_get_by_id_with_documents_returns_none_when_not_found(database):
     asyncio.run(run_test())
 
 
+def test_list_all_with_document_counts(database):
+    """测试 Service 返回知识库及对应文档数量。"""
+    _, session_factory = database
+
+    async def run_test():
+        async with session_factory() as session:
+            first = await create_knowledge_base(session, "无文档知识库")
+            second = await create_knowledge_base(session, "有文档知识库")
+            session.add(
+                Document(
+                    knowledge_base_id=second.id,
+                    name="测试文档.txt",
+                    file_type="txt",
+                    file_path="/tmp/test.txt",
+                    file_size=10,
+                    content_hash="d" * 64,
+                )
+            )
+            await session.flush()
+
+            service = KnowledgeBaseService(session)
+            results = await service.list_all_with_document_counts()
+
+            assert [(item.id, count) for item, count in results] == [
+                (first.id, 0),
+                (second.id, 1),
+            ]
+
+    asyncio.run(run_test())
+
+
 def test_search_by_name(database):
     """测试根据名称关键词搜索知识库。"""
     _, session_factory = database

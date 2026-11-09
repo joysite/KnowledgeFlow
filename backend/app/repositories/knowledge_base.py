@@ -1,10 +1,10 @@
 """KnowledgeFlow 知识库异步 Repository。"""
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models import KnowledgeBase
+from app.models import Document, KnowledgeBase
 from app.repositories.base import BaseRepository
 
 
@@ -31,6 +31,45 @@ class KnowledgeBaseRepository(BaseRepository[KnowledgeBase]):
         )
         result = await self.session.scalars(statement)
         return list(result.all())
+
+    async def list_all_with_document_counts(
+        self,
+        offset: int = 0,
+        limit: int = 20,
+        keyword: str | None = None,
+    ) -> list[tuple[KnowledgeBase, int]]:
+        """分页查询知识库及其文档总数，可按名称关键词过滤。"""
+        if offset < 0:
+            raise ValueError("offset 不能小于 0")
+        if limit <= 0:
+            raise ValueError("limit 必须大于 0")
+        if keyword is not None and not isinstance(keyword, str):
+            raise TypeError("keyword 必须是字符串或 None")
+
+        keyword = keyword.strip() if keyword is not None else None
+        if keyword == "":
+            keyword = None
+
+        document_counts = (
+            select(
+                Document.knowledge_base_id.label("knowledge_base_id"),
+                func.count(Document.id).label("document_count"),
+            )
+            .group_by(Document.knowledge_base_id)
+            .subquery()
+        )
+        statement = select(
+            KnowledgeBase,
+            func.coalesce(document_counts.c.document_count, 0).label("document_count"),
+        ).outerjoin(
+            document_counts,
+            KnowledgeBase.id == document_counts.c.knowledge_base_id,
+        )
+        if keyword is not None:
+            statement = statement.where(KnowledgeBase.name.contains(keyword, autoescape=True))
+        statement = statement.order_by(KnowledgeBase.id.asc()).offset(offset).limit(limit)
+        result = await self.session.execute(statement)
+        return [(knowledge_base, count) for knowledge_base, count in result.all()]
 
     async def get_by_id_with_documents(
         self,

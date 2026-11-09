@@ -662,3 +662,160 @@ def test_claim_stale_processing_rejects_invalid_arguments(
                 )
 
     asyncio.run(run_test())
+
+
+def test_get_by_knowledge_base_with_chunk_counts_returns_accurate_counts(database):
+    """测试聚合查询返回准确分块数量，并保留零分块文档。"""
+    _, session_factory = database
+
+    async def run_test():
+        async with session_factory() as session:
+            knowledge_base = KnowledgeBase(name="文档分块统计知识库")
+            session.add(knowledge_base)
+            await session.flush()
+
+            first = await create_test_document(
+                session,
+                knowledge_base.id,
+                name="两处分块.pdf",
+                content_hash="2" * 64,
+            )
+            second = await create_test_document(
+                session,
+                knowledge_base.id,
+                name="没有分块.pdf",
+                content_hash="3" * 64,
+            )
+
+            session.add_all(
+                [
+                    DocumentChunk(
+                        document_id=first.id,
+                        chunk_index=index,
+                        content=f"分块内容 {index}",
+                        token_count=10,
+                        start_index=index * 10,
+                        end_index=(index + 1) * 10,
+                    )
+                    for index in range(2)
+                ]
+            )
+            await session.flush()
+
+            repository = DocumentRepository(session)
+            items, total = await repository.get_by_knowledge_base_with_chunk_counts(
+                knowledge_base.id
+            )
+
+            assert total == 2
+            assert [(document.id, count) for document, count in items] == [
+                (first.id, 2),
+                (second.id, 0),
+            ]
+
+    asyncio.run(run_test())
+
+
+def test_get_by_knowledge_base_with_chunk_counts_supports_pagination_and_isolation(
+    database,
+):
+    """测试聚合查询分页稳定、总数准确且不混入其他知识库。"""
+    _, session_factory = database
+
+    async def run_test():
+        async with session_factory() as session:
+            first_kb = KnowledgeBase(name="聚合分页知识库")
+            second_kb = KnowledgeBase(name="其他知识库")
+            session.add_all([first_kb, second_kb])
+            await session.flush()
+
+            documents = []
+            for index in range(3):
+                documents.append(
+                    await create_test_document(
+                        session,
+                        first_kb.id,
+                        name=f"文档{index}.pdf",
+                        content_hash=str(index + 4) * 64,
+                    )
+                )
+
+            await create_test_document(
+                session,
+                second_kb.id,
+                name="其他知识库文档.pdf",
+                content_hash="7" * 64,
+            )
+
+            repository = DocumentRepository(session)
+            first_page, total = await repository.get_by_knowledge_base_with_chunk_counts(
+                first_kb.id,
+                offset=0,
+                limit=2,
+            )
+            second_page, second_total = await repository.get_by_knowledge_base_with_chunk_counts(
+                first_kb.id,
+                offset=2,
+                limit=2,
+            )
+
+            assert total == second_total == 3
+            assert [document.id for document, _ in first_page] == [
+                documents[0].id,
+                documents[1].id,
+            ]
+            assert [document.id for document, _ in second_page] == [
+                documents[2].id,
+            ]
+            assert all(count == 0 for _, count in first_page + second_page)
+
+    asyncio.run(run_test())
+
+
+def test_get_by_knowledge_base_with_chunk_counts_returns_empty_and_zero_total(
+    database,
+):
+    """测试不存在的知识库返回空列表和零总数。"""
+    _, session_factory = database
+
+    async def run_test():
+        async with session_factory() as session:
+            repository = DocumentRepository(session)
+
+            items, total = await repository.get_by_knowledge_base_with_chunk_counts(999)
+
+            assert items == []
+            assert total == 0
+
+    asyncio.run(run_test())
+
+
+@pytest.mark.parametrize(
+    ("offset", "limit", "message"),
+    [
+        (-1, 10, "offset 不能小于 0"),
+        (0, 0, "limit 必须大于 0"),
+        (0, -1, "limit 必须大于 0"),
+    ],
+)
+def test_get_by_knowledge_base_with_chunk_counts_rejects_invalid_pagination(
+    database,
+    offset,
+    limit,
+    message,
+):
+    """测试聚合查询拒绝非法分页参数。"""
+    _, session_factory = database
+
+    async def run_test():
+        async with session_factory() as session:
+            repository = DocumentRepository(session)
+
+            with pytest.raises(ValueError, match=message):
+                await repository.get_by_knowledge_base_with_chunk_counts(
+                    1,
+                    offset=offset,
+                    limit=limit,
+                )
+
+    asyncio.run(run_test())
